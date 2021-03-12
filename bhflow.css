@@ -1,0 +1,143 @@
+@import url('https://fonts.googleapis.com/css?family=Noto+Sans');
+@font-face {
+  font-family: "Frutiger Neue";
+  src: local('Frutiger Neue'), local('FrutigerNeue'), url(https://www.recherche.bar.admin.ch/recherche/assets/fonts/FrutigerNeueW02-Regular.woff2) format('woff2');
+}
+html, body{
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+#main {
+  z-index: -1;
+}
+#mainsvg {
+  width: 400%;
+  height: 15000px;
+  margin: 0;
+  z-index: -1;
+}
+#xaxis {
+  width: 400%;
+  position:fixed;
+  bottom:10px;
+}
+#xaxisvg {
+  width: 400%;
+  height: 50px;
+  margin: 0;
+}
+#nodeinfo,#navigation {
+  font-family: 'Frutiger Neue', sans-serif;
+  font-size-adjust: 80%;
+  width:20%;
+  display:none;
+  position:fixed;
+  right:20px;
+  bottom: 90px;
+  background:white;
+  opacity: 0.9;
+  border-radius: 40px;
+  padding: 20px;
+}
+#navigation{
+  top: 20px; 
+  display:block;
+  bottom: unset;
+  text-align: center;
+}
+#nodeinfo h1 {
+  font-size: 1.4em;
+}
+#nodeinfo h2 {
+  font-size: 1.2em;
+}
+rect, circle, text {
+  cursor:pointer;
+}
+
+#anfangbtn, #anfangbtn2 {
+    background-color: #4CAF50;
+    color: white;
+    padding: 10px;
+    font-size: 15px;
+    border: none;
+    cursor: pointer;
+    margin-bottom: 10px;
+    width: 45%;
+    min-width: 150px;
+  }
+
+  #instructions {
+    text-align: left; padding-left:20px; padding-bottom:10px;font-size: small;
+  }
+
+/* Dropdown Button */
+.dropbtn {
+    background-color: #4CAF50;
+    color: white;
+    padding: 10px;
+    font-size: 15px;
+    border: none;
+    cursor: pointer;
+    width: 90%;
+  }
+  
+  /* Dropdown button on hover & focus */
+  .dropbtn:hover, .dropbtn:focus {
+    background-color: #3e8e41;
+  }
+  
+  
+  /* The search field */
+  #myInput {
+    box-sizing: border-box;
+    background-image: url('searchicon.png');
+    background-position: 14px 12px;
+    background-repeat: no-repeat;
+    font-size: 16px;
+    padding: 14px 20px 12px 45px;
+    border: none;
+    border-bottom: 1px solid #ddd;
+    width: 100%;
+  }
+  
+  /* The search field when it gets focus/clicked on */
+  #myInput:focus {outline: 3px solid #ddd;}
+  
+  /* The container <div> - needed to position the dropdown content */
+  .dropdown {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+  }
+  
+  /* Dropdown Content (Hidden by Default) */
+  .dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: #f6f6f6;
+    min-width: 230px;
+    border: 1px solid #ddd;
+    z-index: 1;
+  }
+  
+  /* Links inside the dropdown */
+  .dropdown-content a {
+    color: black;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    cursor: pointer;
+  }
+  
+  /* Change color of dropdown links on hover */
+  .dropdown-content a:hover {background-color: #f1f1f1}
+  
+  /* Show the dropdown menu (use JS to add this class to the .dropdown-content container when the user clicks on the dropdown button) */
+  .show {display:block;}
+
+  #terms {
+    height: 300px;
+    overflow: scroll;
+  }

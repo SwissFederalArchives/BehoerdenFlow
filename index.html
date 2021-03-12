@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<!-- 
+Script author: André Ourednik, Swiss Federal Archives
+Data: Swiss Federal Archives
+Contact: andre.ourednik@bar.admin.ch
+This software is distributed under LGPL v.3 licence.   
+-->
+<meta charset="utf-8">
+<link rel="stylesheet" href="bhflow.css">
+<div id="main"> 
+  <svg id="mainsvg" width="400%" height="15000px">
+    <defs>
+        <style type="text/css">
+          @import url('https://fonts.googleapis.com/css?family=Noto+Sans');
+          @font-face {
+            font-family: "Frutiger Neue";
+            src: local('Frutiger Neue'), local('FrutigerNeue'), url(https://www.recherche.bar.admin.ch/recherche/assets/fonts/FrutigerNeueW02-Regular.woff2) format('woff2');
+          }
+        </style>
+        <marker id="dot" viewBox="0 0 10 10" refX="5" refY="5">
+            <circle cx="5" cy="5" r="5" fill="#999" style="cursor: pointer;" stroke="white" stroke-width="0" filter=""></circle>
+        </marker>
+        <marker id="dotred" viewBox="0 0 10 10" refX="5" refY="5">
+            <circle cx="5" cy="5" r="5" fill="red" style="cursor: pointer;" stroke="white" stroke-width="0" filter=""></circle>
+        </marker>
+        <marker id="arrow" viewBox="0,0,20,20" refX="15" refY="10" markerWidth="15" markerHeight="15" orient="auto-start-reverse">
+            <path d="M0,0L0,20L20,10" fill="violet"></path>
+        </marker>
+        <marker id="arrow2" viewBox="0,0,20,20" refX="0" refY="10" markerWidth="10" markerHeight="10" orient="auto">
+            <path d="M0,0L0,20L20,10" fill="violet"></path>
+        </marker>
+        <filter id="f3" x="0" y="0" width="200%" height="200%">
+            <feOffset result="offOut" in="SourceAlpha" dx="0" dy="0"></feOffset>
+            <feGaussianBlur result="blurOut" in="offOut" stdDeviation="3"></feGaussianBlur>
+            <feBlend in="SourceGraphic" in2="blurOut" mode="normal"></feBlend>
+        </filter>
+    </defs>
+  </svg>
+  <div id="navigation">
+      <div>
+        <button id="anfangbtn" onclick="initialview();">Departemente</button>
+        <button id="anfangbtn2" onclick="initialview2();">Alle Behörden !</button>
+      </div>
+      <div class="dropdown">
+        <div id="instructions">
+            Links-rechts: Shift+Mausrad oder 2-Finger-Pad</br>
+            Behörde Netzwerk: Doppeclick oder Doppeltap 
+        </div>
+        <button onclick="sucheShow()" class="dropbtn">Behörde suchen</button>
+        <div id="myDropdown" class="dropdown-content">
+          <input type="text" placeholder="Suchen.." id="myInput" onkeyup="sucheFilter()">
+          <div id="terms">
+            <a href="#about">Es wurden kein Behörden gefunden</a>
+          </div>
+        </div>
+      </div>
+  </div>
+  <div id="nodeinfo"></div>
+</div>
+<div id="xaxis">
+  <svg id="xaxisvg" width="400%" height="100px"></svg>
+</div>
+<svg id="waitingsvg" width="500" height="100" style="position: fixed; 
+top:40%; left: 30%;">
+  <rect id="inner" x="50" y="50"  width="0" height="20" fill="blue" />
+  <rect id="outer" x="50" y="50"  width="450" height="20" fill="none" stroke ="blue" />
+  <animate 
+    id = "svganimation"
+    xlink:href="#inner"
+    attributeName="width"
+    from="0"
+    to="450" 
+    dur="60s"
+    begin="0s"
+    fill="remove"
+    restart="always"
+  />
+</svg>
+<script src="https://d3js.org/d3.v5.min.js"></script>
+<script id="main">
+
+// TODO : pan and zoom https://stackblitz.com/edit/d3-pan-and-zoom
+// Alternative : use webgl renderer with the help of pixi.js : https://github.com/pixijs/pixi.js
+
+const svg = d3.select("#mainsvg");
+const waitingsvg = d3.select("#waitingsvg");
+const width = screen.width * 4 ; // svg.style("width");
+const height = 15000 ;// svg.style("height") ;
+const color = d3.scaleOrdinal(d3.schemeCategory10);
+const timeparse = d3.timeParse("%Y-%m-%d");
+const getyear = d3.timeFormat("%Y");
+const getday = d3.timeFormat("%j"); // day of the year as a decimal number [001,366].
+var graph;
+var graphstore;
+var yearscale;
+var isolated = false;
+
+// Main function: fetch data and launch main functions
+start();
+async function start(){
+  graph = await d3.json("bhgraph.json");
+  cleangraph();
+  main();
+  constructDropList();
+}
+
+// Convert dates to decimal numbers
+const today = new Date();
+const oldest = new Date('1848-09-12');
+function datedecimal(t){
+  let date = timeparse(t);
+  if (date === null) date = oldest;
+  let daysinyear = ((new Date(date.getFullYear(),11,31)) - (new Date(date.getFullYear(),0,1))) / 86400000;
+  if (date > today) date = today;
+  if (date < oldest) date = oldest;
+  let decimal = parseInt(getyear(date)) + parseInt(getday(date)) / daysinyear;
+  return(decimal);
+}
+
+// Clean the graph data and store a copy of the complete graph
+function cleangraph(){
+  graph.nodes.forEach(n => {
+    // If there is a T component, remove it: 1945-12-31T00:00:00Z
+    n.marked = false; // for visual effects
+    n.mconnected = false; // for visual effects
+    n.height = n.niveau == 1 ? 50 : n.niveau == 2 ? 30 : 20 ;
+    n.bgn_dt = n.bgn_dt.replace(/T.*/,""); 
+    n.end_dt = n.end_dt.replace(/T.*/,"");
+    // make a decimal version of the date, for positioning in the network
+    n.bgn_dec = Math.round(datedecimal(n.bgn_dt)*1000)/1000;
+    n.end_dec = Math.round(datedecimal(n.end_dt)*1000)/1000;
+    // make the data consistent
+    n.bestaende = Array.isArray(n.bestaende) ? n.bestaende : [n.bestaende]; 
+    n.bestaende = typeof n.bestaende[0] === undefined || n.bestaende[0] == null ? [] : n.bestaende;
+    n.departement = Array.isArray(n.departement[0]) ? n.departement[0] : [n.departement[0]];
+    n.departement = n.departement.length == 0 || n.departement == "NA" ? [0] : n.departement;
+    n.depgroupnumid = Array.isArray(n.depgroupnumid[0]) ? n.depgroupnumid[0] : [n.depgroupnumid[0]];
+    n.depgroupnumid = n.depgroupnumid.length == 0 ? [0] : n.depgroupnumid;
+    n.depgroupid = Array.isArray(n.depgroupid[0]) ? n.depgroupid[0] : [n.depgroupid[0]];
+    n.depgroupid = n.depgroupid.length == 0 ? [""] : n.depgroupid;
+  });
+  graph.links.forEach(l => {l.mconnected = false; l.id = 0});
+  const minyear = d3.min(graph.nodes, n => n.bgn_dec) ;
+  const maxyear = d3.max(graph.nodes, n => n.end_dec) ;
+  const maxyearspan = d3.max(graph.nodes, n => n.end_dec - n.bgn_dec ) ;  
+  yearscale = d3.scaleLinear()
+    .domain([minyear-maxyearspan/2, maxyear+maxyearspan/2])
+    .range([0, width]);
+  graph.nodes.forEach(n => {
+      n.width = yearscale(n.end_dec) - yearscale(n.bgn_dec);
+  });
+  for(i=0 ; i<graph.links.length ; i++){graph.links[i].id=i+1}
+  // store the full graph for later use
+  graphstore = Object.assign({}, graph);
+}
+
+var container;
+var link;
+var node;
+var circle;
+var rectangle;
+var label;
+var currentNodeId ;
+var keepScrollingTo;
+var graphLayout;
+
+function main() {
+  const axisdiv = d3.select("#xaxis");
+  const svg2 = d3.select("#xaxisvg");
+  const x_axis = d3.axisBottom().scale(yearscale).tickFormat(d3.format("d"));
+  var axiscontainer = svg2.append("g")
+    .attr("class", "xaxis")
+    .call(x_axis)
+    .attr("font-size","15")
+    .attr("font-weight","bold")
+    .selectAll('path')
+      .attr('stroke-width','3');
+    ;
+  window.onscroll = function() {unfixed_x()};
+  function unfixed_x() { // so that the axis fixd div remains on the same y but moves along with x  
+    let delta = document.body.scrollLeft || document.documentElement.scrollLeft;
+    axisdiv.attr("style","left : -" + delta + "px");
+  }
+
+  container = svg.append("g");
+  link = container.append("g").attr("class", "links").selectAll("line");
+  node = container.append("g").attr("class", "nodes").selectAll("g");
+  currentNodeId = 0;
+  keepScrollingTo = 100;
+  
+  graphLayout = d3.forceSimulation()
+        .force("charge", d3.forceManyBody()
+            .strength(isolated ? -3000 : - 1000)
+            .distanceMax(isolated ? 200 : 10000) // sets the maximum distance between nodes over which this force is considered.
+        )
+        //.force("center", d3.forceCenter(width / 2, height / 2))
+        //.force('x', d3.forceX().x(function(d) {return yearscale(d.bgn_dec);}).strength(5))
+        .force('y', d3.forceY(height / 2)
+        // .force('y', d3.forceY(isolated ? height / 2 : d => (0.1 * height) + d.depgroupnumid[0] * height / 8)
+          .strength(d => d.level == 1 ? .05 : 0.05)
+        ) // this force is stronger if for departments
+        .force('collision', forceRectangles())
+        // .force('collision', d3.forceCollide().radius(function(d) {return 60}))
+        // .force('box', boxForce)
+        .force('departementorder', forceDepartmentOrder())
+        // .force('departementclustering', forceDepartementClustering())
+        .on("tick", ticked);
+  
+  makegraph(); // we have to produce the graph a first time to be able to make the links selectable
+  departementclustercreate(); // prepare the clustering force
+  intialShowDepartments();
+}
+
+function waitingStart(duration) {
+  let secs = duration / 999.9 + "s"; // making the animation slightly shorter than duration, because it restarts at the end
+  let svganim = document.getElementById("svganimation");
+  svganim.setAttribute("dur",secs)
+  svganim.beginElement();
+  d3.select('body').style("cursor","wait");
+  svg.style("display","none");
+  waitingsvg.style("display","block");
+}
+
+function waitingStop(timeout) {
+  setTimeout(() => {  
+      waitingsvg.style("display","none");
+      svg.style("display","block");
+      d3.select('body').style("cursor","pointer");
+      const xnow = d3.min(graph.nodes, n => n.x - n.height) - 5;
+      const ynow = d3.min(graph.nodes, n => n.y - n.height) - 5;
+      window.scroll({left:xnow,top:ynow,behavior:"smooth"});
+      d3.select('body').style("cursor","pointer");
+  }, timeout);
+}
+
+function makegraph() {
+    // nodes
+    node = node
+        .data(graph.nodes, d => d.id)
+        .join("g")
+    ;
+
+    node.selectAll("*").remove(); // Necessary. Otherwise, nodes that were in the graph prior to joining from graphstore will have their rectangles and circles redrawn over each other.
+
+    rectangle = node.append("rect")
+        .attr("width", d => d.width + "px" )
+        .attr("height", d => d.height  + "px")
+        .attr("y", d => "-" + d.height / 2  + "px") // translation with regard to center of embedding node
+        .attr("fill", "lightblue")
+        // .attr("filter", "url(#f3)") // applying an svg filter makes app run slower
+        .attr("opacity","0.7")
+    ;
+
+    circle = node.append("circle")
+        .attr("r", d => d.height/2+ "px" )
+        .attr("fill", '#3B4B98')
+        //.attr("cx","10px")
+    ;
+    
+    label = node.append("text")
+        .text(d => d.name )
+        .style('font-size', d => d.niveau == 1 ? "25px" : d.niveau == 2 ? "19px" : "11px")
+        .style('font-family','Frutiger Neue')
+        .style('font-wight','Bold')
+        .attr('dominant-baseline',"middle")
+        .attr('text-anchor',"left")
+        .attr('fill','#3B4B98')
+        .attr("x", d => 30 / d.niveau  + 5 + "px" )
+    ;
+
+    node.append("title")
+        .text(function(d) { return d.name + " (" + d.bgn_dt + " - " + d.end_dt + ")"; });
+
+    /* ---  MOUSE and TOUCSCREEN control ----- */
+
+    // cf. http://jsfiddle.net/maxrawhawk/78qkmyLw/
+    var startTime, previousStartTime;
+    
+    // node.on("mouseover", focus).on("mouseout", unfocus);
+    node.on("click", focus);
+    node
+        .on("dblclick", isolate)
+        .on("touchstart", function(d) {
+            previousStartTime = startTime;
+            startTime = new Date().getTime(); 
+            if ((startTime - previousStartTime) < 1000 ) {
+                // alert("double-tap: " + Object.values(d));
+                isolate(d) ;
+            };
+        })
+    ;
+    d3.select("body").on("click",unfocus);
+    
+    node.call(
+        d3.drag()
+            .on("start", dragstarted)
+            .on("drag", dragged)
+            .on("end", dragended)
+    );
+
+    // links
+    link = link
+        .data(graph.links)
+        .join("line")
+          .attr("stroke", d => d.value === 10000 ? "#9CB1D7" : "green")
+          .attr("stroke-width", d => d.value === 10000 ? "3px" : "1px")
+          .attr('marker-end', d => d.value === 10000 ? 'url(#dot)' : 'url(#arrow)')
+          .attr('marker-start', d => d.value === 10000 ? '' : 'url(#arrow2)')
+    ;
+
+    // simulation
+
+    // For effect of force parameters see: https://observablehq.com/@maliky/testing-the-d3-forces-parameters
+    
+    // N.B. graph.layout mutates the graph object and the graphstore as well. But graphstore is insensible to removing of nodes and links.
+    let deplist = [];
+    graph.nodes.filter(n=> n.niveau ==1).forEach(n => deplist.push(n.id));
+    graphLayout
+        .nodes(graph.nodes)
+        .force("link", d3.forceLink(graph.links)
+          .id(d => d.id)
+          .distance(d => deplist.includes(d.source) & deplist.includes(d.target) ? 50 : 100) // nodes of same departement are kept close together
+          .strength(
+            d => d.value == 10000 | (deplist.includes(d.source) & deplist.includes(d.target)) ? 0.07 : 0.01
+          ) // linked nodes try to be exactly at a given distance
+        );
+    graphLayout.alpha(1).alphaTarget(0).restart();
+}
+
+function ticked() {
+    // node.attr("x", d => yearscale(d.bgn_dec) );
+    graph.nodes.forEach (function(n,i) {
+    n.x = yearscale(n.bgn_dec);
+    //nodePos.x = xscale (data[i].year); // or whatever
+    })
+    link
+    .attr("x1", d => 
+        d.value == 10001 ? 
+            d.source.x <= d.target.x ? 
+                d.target.x : 
+                d.source.x :
+            d.source.x
+    )
+    .attr("y1", d => 
+        d.value == 10000 ?
+            d.source.y :
+            d.target.y > d.source.y ? 
+                d.source.y + d.source.height/2 :
+                d.source.y - d.source.height/2 
+    )
+    .attr("x2", d =>
+        d.value == 10001 ? 
+            d.source.x >= d.target.x ? 
+                d.source.x : 
+                d.target.x :
+            d.target.x + d.target.width <= d.source.x ? 
+                d.target.x + d.target.width - 6 :
+                d.source.x - d.target.x >= 6 ? 
+                    d.source.x -6 : 
+                    d.source.x 
+    )
+    .attr("y2", d => 
+        d.value == 10000 ?
+            d.target.y :
+            d.target.y > d.source.y ? 
+                d.target.y - d.target.height/2 :
+                d.target.y + d.target.height/2 
+    );
+
+    /*
+    // getting Math.max etc. constrains the network in the page
+    node
+    .attr("transform", function(d) {
+        d.x = Math.max(40, Math.min(width - 40, d.x));
+        d.y = Math.max(40, Math.min(height - 40, d.y));
+        return "translate(" 
+        + d.x
+        + "," 
+        + d.y
+        + ")";
+    })
+    */
+
+    node
+    .attr("transform", d => { 
+        return "translate(" + d.x + "," + d.y  + ")"
+    })   
+    
+    // Keep the selected node in sight during animation
+    if(currentNodeId>0 & keepScrollingTo > 0) {
+      d3.selectAll("body").style("cursor",keepScrollingTo > 1 ? "wait":"auto");
+      d3.selectAll("rect, circle, text").style("cursor",keepScrollingTo > 1 ? "wait":"pointer");
+      let lastNode = graph.nodes.filter(n=>n.id==currentNodeId)[0];
+      // TODO the next lines just make the node appear in red. But this is a workaround for some asynchronous interference with updateColour.
+        updateColorRepair();
+      // and the scrolling
+      if (centernode) {
+        window.scrollTo(lastNode.x - screen.width/4 , lastNode.y - screen.height/3 )
+      } else {
+        window.scrollTo(lastNode.x - xscreenoffset, lastNode.y - yscreenoffset);
+      }
+      if (keepScrollingTo == 1) centernode = false;
+      keepScrollingTo -= 1;
+    }
+}
+
+function markSelected(d){
+  // TODO : only hierarchical links incomming or outcomming of the current marked node should have opacity 0.9. Otherwise, their opacity should be 0.1. 
+  // NODES
+    graph.nodes.forEach(n => {n.marked = false; n.mconnected = false})
+    d.marked = true;
+    let hirerarlinked = [];
+    let hierarlinks = graph.links.filter(l => 
+        l.value == 10001 & l.source == d | 
+        l.target == d
+    );
+    hierarlinks.forEach(h => {
+        hirerarlinked.push(h.source.id);
+        hirerarlinked.push(h.target.id)}
+    ) 
+    graph.nodes.forEach(n => n.mconnected = (d.group != "NA" & n.group == d.group) | hirerarlinked.includes(n.id) ? true : false)
+  // LINKS
+    // show also links between currently displayed superior level 
+    let displayednodes = graph.nodes.filter(n => n.mconnected);
+    graph.links.forEach(l => { 
+        if (displayednodes.includes(l.source) & displayednodes.includes(l.target)) {hierarlinks.push(l)}
+    })
+    graph.links.forEach(l => l.mconnected = hierarlinks.includes(l) ?
+      true : 
+      l.value == 10000 & d.group != "NA" & (l.source.group == d.group || l.target.group == d.group) ? true : false
+    )
+}
+
+function infoShow(d) {
+    const end_dt = d.end_dec > today.getFullYear() ? " " : d.end_dt;
+    console.log(d);
+    let html = `<h1>${d.name}</h1><div>${d.bgn_dt} — ${end_dt}</div>`;
+    if (d.departement.length > 0 ) {
+        let deplist = d.departement.map((v, i) => {
+          return {"depid": v , "depgroupid" : d.depgroupid[i]} ;
+        })
+        if (!(deplist.length == 1 & deplist[0].depid == 0)){
+          html += "<h2>Departement(e):</h2>" ;
+          html += "<ul>" ;
+          deplist.forEach(b => { if (b.depid > 0) {
+                  let dpt = graphstore.nodes.filter(n => n.id == b.depid)[0].name;
+                  html += `<li>${dpt} (${b.depgroupid})</li>`;
+          }}); html += "</ul>" ;
+        }} if (d.bestaende.length > 0 ) { html += "<h2>Bestände:</h2>" ;
+        html += "<ul>" ; d.bestaende.forEach(b => {
+        html += `<li><a href="https://www.recherche.bar.admin.ch/recherche/#/de/archiv/einheit/${b.id}" target="_blank">${b.sgntr}</a></li>`;
+        });
+        html += "</ul>" ;
+    }
+    d3.select("#nodeinfo")
+        .style("display","block")
+        .html("<ul>" + html + "</ul>");
+}
+
+function infoHide() {
+    d3.select("#nodeinfo").style("display","none")
+}
+
+function restoreGraph(){
+    // add all elements to graph removed by previous filter
+    graphstore.nodes.forEach(sn => {
+        if (graph.nodes.filter(n=> n.id == sn.id).length==0) graph.nodes.push(Object.assign({}, sn));
+    })
+    // TODO : something's wrong with attaching those links
+    graphstore.links.forEach(sl => {
+        if (graph.links.filter(l=> l.id == sl.id).length==0) graph.links.push(Object.assign({}, sl));
+    })
+    // relink nodes correcly
+    graph.links.forEach(l => {
+        l.source = graph.nodes.filter(n=> n.id == l.source.id)[0];
+        l.target = graph.nodes.filter(n=> n.id == l.target.id)[0];
+    });
+}
+
+function focus(d) {
+    markSelected(d);
+    node.style("opacity", n => n.mconnected | n.marked ? 0.9 : 0.1);
+    // focus 
+    link.style("opacity", l => l.mconnected & (l.value == 10000 | l.source == d | l.target == d) ? 0.9 : 0.1);
+    updateColor();
+    infoShow(d);
+    d3.event.stopPropagation();
+}
+
+var xscreenoffset;
+var yscreenoffset;
+function isolate(d) {
+    smoothdepartmentorder=true;
+    currentNodeId = d.id;
+    xscreenoffset = d.x - window.scrollX ;
+    yscreenoffset = d.y - window.scrollY ;
+    restoreGraph();
+    markSelected(d);
+    //graph.nodes.forEach((n,i) => {if (!(n.marked | n.mconnected)) graph.nodes.splice(i,1) })
+    //graph.links.forEach((l,i) => {if (!l.mconnected) graph.links.splice(i,1) })
+    graph.nodes = graph.nodes.filter(n => n.marked || n.mconnected)
+    graph.links = graph.links.filter(l => l.mconnected);
+    isolated = true;
+    makegraph();
+    d.marked = true;
+    // graph.nodes.forEach(n => {if (n.id == currentNodeId) {n.marked = true;}});
+    node.style("opacity", 0.9);
+    link.style("opacity", 0.9);
+    infoShow(d);
+    updateColor();
+    keepScrollingTo = 100;
+}
+
+function unfocus() {
+    graph.nodes.forEach(n => {n.marked = false});
+    node.style("opacity", 0.9);
+    link.style("opacity", 0.9);
+    infoHide();
+    updateColor();
+}
+
+function intialShowDepartments(){
+  waitingStart(3000);
+  graph.nodes = graph.nodes.filter(n => n.niveau ==1);
+  graph.links = graph.links.filter(l => l.value==10000 && l.target.niveau == 1 );
+  makegraph();
+  window.scrollTo(100,100);
+  waitingStop(3000);
+}
+
+var smoothdepartmentorder = false;
+function initialview() {
+    smoothdepartmentorder=false;
+    restoreGraph();
+    unfocus();
+    // TODO : some async process is making this not work despite working from the command linke. Perhaps transform makegraph to a promise ? 
+    graph.nodes.forEach(n => {n.marked = false});
+    currentNodeId = 0;
+    intialShowDepartments();
+    updateColor();
+}
+
+function initialview2() {
+    waitingStart(40000);
+    restoreGraph();
+    unfocus();
+    let maxgroup = d3.max(graph.nodes, n => n.group)
+    graph.nodes.forEach(n => {
+      n.marked = false;
+      n.y = (n.depgroupnumid[0] + 1) * height / 10 + n.group / maxgroup * height / 100 ;
+    });
+    currentNodeId = 0;
+    waitingStop(40000);
+    makegraph();
+    updateColor();
+}
+
+// TODO this one is called from tick because the upade color behaves in some async way
+function updateColorRepair() { 
+  graph.nodes.forEach(n => {if (n.id == currentNodeId) {n.marked = true;}});
+  updateColor();
+  let successors = [];
+  graph.links.filter(l => l.value == 10000 & l.target.marked).forEach(l => successors.push(l.source));
+  let subordinates = [];
+  graph.links.filter(l => l.value == 10001 & l.target.marked).forEach(l => subordinates.push(l.source));
+  circle.attr("fill", d => d.marked | successors.includes(d) ? "red" : subordinates.includes(d) ? 'violet': '#3B4B98');
+}
+
+function updateColor() {
+    // TODO : some async process is making this not work? Perhaps transform makegraph to a promise ? 
+    // Circles
+    let successors = [];
+    graph.links.filter(l => l.value == 10000 & l.target.marked).forEach(l => successors.push(l.source));
+    let subordinates = [];
+    graph.links.filter(l => l.value == 10001 & l.target.marked).forEach(l => subordinates.push(l.source));
+    circle.attr("fill", d => d.marked | successors.includes(d) ? "red" : subordinates.includes(d) ? 'violet': '#3B4B98');
+    // Rectangles
+    rectangle
+        .attr("fill", d => d.marked ? "salmon" : 'lightblue')
+        .attr("stroke", d => d.id == currentNodeId ? "red" : '')
+        .attr("stroke-width", d => d.id == currentNodeId ? 5 : 0)
+    ;
+    // LInks
+    let n = graph.nodes.filter(n=>n.marked)[0];
+    link
+        .attr("stroke", d => {
+            return d.source == n || d.target == n ? 
+             (d.value === 10000 ? "red" : "violet") :
+             (d.value === 10000 ? "#9CB1D7" : "violet")
+        })
+        .attr("marker-end", d => {
+            let n = graph.nodes.filter(n=>n.marked)[0];
+            return d.value == 10001 ?  
+                "url(#arrow)" : 
+                d.source == n || d.target == n ? 
+                    "url(#dotred)" : "url(#dot)"
+        })
+    ;
+}
+
+function dragstarted(d) {
+    d3.event.sourceEvent.stopPropagation();
+    if (!d3.event.active) graphLayout.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
+}
+
+function dragged(d) {
+    d.fx = d3.event.x;
+    d.fy = d3.event.y;
+}
+
+function dragended(d) {
+    if (!d3.event.active) graphLayout.alphaTarget(0);
+    d.fx = null;
+    d.fy = null;
+}
+  
+function forceRectangles() { 
+// https://observablehq.com/@roblallier/rectangle-collision-force
+  let nodes;
+  var padding = 30;
+  function force(alpha) {
+      const quad = d3.quadtree(graph.nodes, d => d.x, d => d.y);
+      for (const d of nodes) {
+        quad.visit((q, x1, y1, x2, y2) => {
+          let updated = false;
+          if(q.data && q.data !== d){
+            let x = d.x - q.data.x,
+                y = d.y - q.data.y,
+                xSpacing = (q.data.width + d.width) ,
+                ySpacing = padding + (q.data.height + d.height) / 2,
+                absX = Math.abs(x),
+                absY = Math.abs(y),
+                l,
+                lx,
+                ly
+            ;
+            if (absX < xSpacing && absY < ySpacing) {
+              l = Math.sqrt(x * x + y * y);
+              lx = (absX - xSpacing) / l;
+              ly = (absY - ySpacing) / l;
+              // the one that's barely within the bounds probably triggered the collision
+              if (Math.abs(lx) > Math.abs(ly)) { lx = 0; } else {ly = 0;}
+              ly = ly * 0.4; // make the force less agressive
+              // d.x -= x *= lx;
+              d.y -= y *= ly ; // * alpha // multiplying by alpha makes the force decay with time
+              // q.data.x += x;
+              // q.data.y += y;
+              updated = true;
+            }
+          }
+          return updated;
+        });
+      }
+  }
+  force.initialize = _ => nodes = _;
+  return force;
+}
+
+function unique(value, index, self) {
+  return self.indexOf(value) === index;
+}
+
+// This is a swapping force
+// https://tomroth.com.au/fdg-custom/
+// https://blockbuilder.org/pbellon/c25cf696a3fefab3675228b087c800e4
+function forceDepartmentOrder() {
+  let nodes;
+  let padding = 20;
+  function force(alpha) {
+    const quad = d3.quadtree(graph.nodes, d => d.x, d => d.y);
+    for (const d of nodes) {
+      quad.visit((q, x1, y1, x2, y2) => { // x1, y1, x2 and y2 are never used. We only  care about the data stored in q, the node that d is currently being compared to
+        let updated = false;
+        if(q.data) {
+          // only applying to nodes not attached to more than one departement. Otherwise, index q.data.depgroupnumid.length-1 to get the last one
+          let qgroupid = q.data.depgroupnumid.filter(unique).length > 1 ? 0 : q.data.depgroupnumid[0] ;
+          let dgroupid = d.depgroupnumid.filter(unique).length > 1 ? 0 : d.depgroupnumid[0];
+          if(qgroupid !== dgroupid & dgroupid != 0 & qgroupid != 0){ // nodes do not exerce a force on nodes of the same departement, nor is the departement undefined
+            let y = d.y - q.data.y; // if y is negative, d is now above q
+            let ySpacing = padding + (q.data.height + d.height) / 2; 
+            let absY = Math.abs(y);
+            ly = (absY + ySpacing); 
+            ly *= smoothdepartmentorder ? 1.5 * alpha * alpha : 1; // alpha * alpha makes the force decay quickly, while being swapping at the beginning
+            if (dgroupid < qgroupid & y > 0 - ySpacing) {
+              // is below but should be above
+              if (q.data.y > ySpacing) { // prevent this from leaving above 0
+                d.y -= ly;
+                q.data.y += ly;
+              }
+              updated = true;
+            } 
+            if (dgroupid > qgroupid & y < 0 + ySpacing) {
+              // is above but should be below
+              d.y += ly;
+              q.data.y -= ly;
+              }
+              updated = true;
+          }
+        }
+        return updated;
+      });  
+    }; 
+  }
+  force.initialize = _ => nodes = _; // nodes are filled here, making d accessible
+  return force;
+}
+
+// Unused force for departement clustering
+var departements;
+function departementclustercreate() {
+  const m = d3.max(graph.nodes, n => n.depgroupnumid) + 1;
+  departements = new Array(m);
+  graph.nodes.forEach(n => {
+    const i = n.depgroupnumid[0];
+    if(!departements[i] || (n.y > departements[i].y)) {
+      departements[i] = {departement: n.depgroupid[0], y: n.y, height: n.height}
+    }
+  });
+}
+function forceDepartementClustering() {
+  let nodes;
+  function force(alpha) {
+    console.log("forceDepartementClustering");
+    for (const d of nodes) {
+      var dpt = departements[d.depgroupnumid[0]];
+      if (dpt === d) return;
+      // var x = d.x - dpt.x,
+        var y = d.y - dpt.y;
+      // var  l = Math.sqrt(x * x + y * y),
+        var l = y;
+        var r = d.height + dpt.height;
+      if (l > r) {
+        l = (l - r) / l * alpha;
+        // d.x -= x *= l;
+        d.y -= y *= l;
+        // dpt.x += x;
+        dpt.y += y; // updates the departements array?
+      }
+    }
+  };
+  force.initialize = _ => nodes = _; // nodes are filled here, making d accessible
+  return force;
+}
+
+/* --------- SEARCH -------------- */
+/* When the user clicks on the button,
+toggle between hiding and showing the dropdown content */
+function sucheShow() {
+  document.getElementById("myDropdown").classList.toggle("show");
+}
+
+function sucheFilter() {
+  var input, filter, ul, li, a, i;
+  input = document.getElementById("myInput");
+  filter = input.value.toUpperCase();
+  div = document.getElementById("myDropdown");
+  a = div.getElementsByTagName("a");
+  for (i = 0; i < a.length; i++) {
+    txtValue = a[i].textContent || a[i].innerText;
+    if (txtValue.toUpperCase().indexOf(filter) > -1) {
+      a[i].style.display = "";
+    } else {
+      a[i].style.display = "none";
+    }
+  }
+}
+
+function constructDropList(){
+    let bhlist = "";
+    graphstore.nodes.forEach(n => bhlist += `<a onclick='shownode(${n.id})'>${n.name}</a>`)
+    d3.select("#terms").html(bhlist);
+}
+
+var centernode = false;
+function shownode(t){
+    centernode = true;
+    restoreGraph();
+    graph.nodes.forEach(n => {if (n.id == t) {
+        isolate(n);
+        infoShow(n);
+    }}); 
+}
+
+
+/* ------- ZOOM AND SCROLL -------- */
+// cf. https://stackblitz.com/edit/d3-pan-and-zoom
+
+/*
+d3.select('#main')
+  .on('scroll', scrolled)
+  .call(d3.zoom()
+    .scaleExtent([0.1, 10])
+    .translateExtent([[0, 0], [width, height]])
+    .on('zoom', zoomed));
+*/
+
+function zoomed() {
+  const scale = d3.event.transform.k;
+  const scaledWidth = width * scale;
+  const scaledHeight = height * scale;
+
+  // Change SVG dimensions.
+  svg
+    .attr('width', scaledWidth)
+    .attr('height', scaledHeight);
+
+  // Scale the image itself.
+  d3.select('#mainsvg g, #xaxisvg g').attr('transform', `scale(${scale})`);
+
+  // Move scrollbars.
+  const wrapper = d3.select('#main').node();
+  wrapper.scrollLeft = -d3.event.transform.x;
+  wrapper.scrollTop = -d3.event.transform.y;
+
+  // If the image is smaller than the wrapper, move the image towards the
+  // center of the wrapper.
+  const dx = d3.max([0, wrapper.clientWidth / 2 - scaledWidth / 2]);
+  const dy = d3.max([0, wrapper.clientHeight / 2 - scaledHeight / 2]);
+  d3.select('svg').attr('transform', `translate(${dx}, ${dy})`);
+}
+
+function scrolled() {
+  const wrapper = d3.select('#main');
+  const x = wrapper.node().scrollLeft + wrapper.node().clientWidth / 2;
+  const y = wrapper.node().scrollTop + wrapper.node().clientHeight / 2;
+  const scale = d3.zoomTransform(wrapper.node()).k;
+  // Update zoom parameters based on scrollbar positions.
+  wrapper.call(d3.zoom().translateTo, x / scale, y / scale);
+}
+
+/* REFERENCES :
+view-source:http://bl.ocks.org/fancellu/raw/2c782394602a93921faff74e594d1bb1
+https://bl.ocks.org/mapio/53fed7d84cd1812d6a6639ed7aa83868
+https://observablehq.com/@d3/force-directed-graph
+https://bl.ocks.org/heybignick/3faf257bbbbc7743bb72310d03b86ee8
+A 3D variant : https://vasturiano.github.io/3d-force-graph/example/text-nodes/
+https://github.com/vasturiano/3d-force-graph
+
+# Rectangular force collide:
+https://bl.ocks.org/cmgiven/547658968d365bcc324f3e62e175709b
+
+# Others
+https://stackoverflow.com/questions/40709961/trying-to-return-a-maximum-date-using-d3-max
+*/
+
+// https://bl.ocks.org/mbostock/1093130
+// https://observablehq.com/@d3/selection-join
+// https://observablehq.com/@d3/modifying-a-force-directed-graph
+// https://stackoverflow.com/questions/57277281/d3-how-to-update-force-simulation-when-data-values-change
+// filter elements : https://bl.ocks.org/denisemauldin/cdd667cbaf7b45d600a634c8ae32fae5
+// make this collapsible: https://codepen.io/gyunee/pen/oNvEoOb
+// https://bl.ocks.org/tezzutezzu/cd04b3f1efee4186ff42aae66c87d1a7
+
+
+// Move to canvas or Web3GL 
+// https://bl.ocks.org/mbostock/1276463
+// https://softeng.oicr.on.ca/henry_zhao/2019/03/06/Implement-Stardust/
+// https://bl.ocks.org/mbostock/1276463
+// https://blog.scottlogic.com/2020/05/01/rendering-one-million-points-with-d3.html
+// Canvas and SVG intermingling http://bl.ocks.org/sxv/4485778
+// Do it with WebGL
+// https://observablehq.com/@zakjan/force-directed-graph-pixi
+
+</script>
